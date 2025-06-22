@@ -7,16 +7,19 @@ type lexer struct {
 }
 
 func (l *lexer) atEnd(peek int) bool {
-	return l.c+peek == l.len
+	return l.c+peek >= l.len
 }
 
 func (l *lexer) eatWhitespaces() {
-	for isWhitespace(l.s[l.c]) {
+	for !l.atEnd(0) && isWhitespace(l.s[l.c]) {
 		l.c++
 	}
 }
 
 func (l *lexer) nextNumber(allowNeg bool) string {
+	if l.atEnd(0) {
+		return ""
+	}
 	l.eatWhitespaces()
 	peek := 0
 	if allowNeg && l.s[l.c] == '-' {
@@ -31,6 +34,9 @@ func (l *lexer) nextNumber(allowNeg bool) string {
 }
 
 func (l *lexer) nextChars() string {
+	if l.atEnd(0) {
+		return ""
+	}
 	l.eatWhitespaces()
 	peek := 0
 	for !l.atEnd(peek) && !isDigit(l.s[l.c+peek]) && !isWhitespace(l.s[l.c+peek]) {

@@ -7,7 +7,7 @@ import (
 )
 
 var DEFAULT_DATE_FORMAT = DDMMYY
-var SYSTEM_TIMEZONE = UTC
+var SYSTEM_TIMEZONE = getLocalTimezoneOffset()
 
 func TimezoneToOffset(timezoneString string) UTCOffset {
 	if len(timezoneString) > 4 && (timezoneString[:4] == "UTC-" || timezoneString[:4] == "UTC+") {
@@ -16,8 +16,10 @@ func TimezoneToOffset(timezoneString string) UTCOffset {
 		return UTCOffset(n)
 	}
 	switch strings.ToLower(timezoneString) {
-	case "est", "bst":
+	case "gmt", "bst":
 		return 1
+	case "est":
+		return -5
 	default:
 		return UTC
 	}
@@ -53,7 +55,7 @@ func Parse(timeString string, opts ...ParseOption) time.Time {
 			n1, _ := strconv.Atoi(num)
 			n2, _ := strconv.Atoi(l.nextNumber(false))
 			var n3 int
-			if isDateSeparator(l.s[l.c]) {
+			if !l.atEnd(0) && isDateSeparator(l.s[l.c]) {
 				l.c++
 				n3, _ = strconv.Atoi(l.nextNumber(false))
 			}
@@ -72,7 +74,7 @@ func Parse(timeString string, opts ...ParseOption) time.Time {
 			timeD.minute, _ = strconv.Atoi(num)
 			timeD.minute %= 60
 
-			if l.s[l.c] == ':' {
+			if !l.atEnd(0) && l.s[l.c] == ':' {
 				// Set seconds
 				l.c++
 				num = l.nextNumber(false)
@@ -91,14 +93,14 @@ func Parse(timeString string, opts ...ParseOption) time.Time {
 
 	var t time.Time
 	if dateD.day != 0 { // Time from date
-		t = time.Date(dateD.year, time.Month(dateD.month), dateD.day, timeD.hour, timeD.minute, timeD.second, 0, nil)
+		t = time.Date(dateD.year, time.Month(dateD.month), dateD.day, timeD.hour, timeD.minute, timeD.second, 0, time.FixedZone("", int(options.UTCOffset*60*60)))
 	} else { // Time from now
 		t = time.Now()
 		if timeD.hour != 0 {
 			now := time.Now()
 			t = t.Add(time.Duration(timeD.hour-now.Hour()) * time.Hour).
 				Add(time.Duration(timeD.minute-now.Minute()) * time.Minute).
-				Add(time.Duration(timeD.second-now.Second()) * time.Minute)
+				Add(time.Duration(timeD.second-now.Second()) * time.Second)
 		}
 	}
 	t = t.Add(time.Duration(extraMs) * time.Millisecond).

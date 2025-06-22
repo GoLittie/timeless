@@ -1,6 +1,9 @@
 package timeless
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 func isDigit(c uint8) bool {
 	return '0' <= c && c <= '9'
@@ -48,4 +51,9 @@ func reorderFormat(num1, num2, num3 int, format DateFormat) (year int, month int
 		return num1, num2, num3
 	}
 	return
+}
+
+func getLocalTimezoneOffset() UTCOffset {
+	_, o := time.Now().Zone()
+	return UTCOffset(o / 3600)
 }

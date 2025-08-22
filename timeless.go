@@ -1,114 +1,109 @@
 package timeless
 
 import (
-	"strconv"
+	"github.com/golittie/timeless/internal/lexer"
+	"github.com/golittie/timeless/pkg/dateformat"
+	time_calculator "github.com/golittie/timeless/pkg/time-calculator"
+	"github.com/golittie/timeless/pkg/timezone"
 	"strings"
 	"time"
 )
 
-var DEFAULT_DATE_FORMAT = DDMMYY
-var SYSTEM_TIMEZONE = getLocalTimezoneOffset()
-
-func TimezoneToOffset(timezoneString string) UTCOffset {
-	if len(timezoneString) > 4 && (timezoneString[:4] == "UTC-" || timezoneString[:4] == "UTC+") {
-		s := timezoneString[3:]
-		n, _ := strconv.Atoi(s)
-		return UTCOffset(n)
-	}
-	switch strings.ToLower(timezoneString) {
-	case "gmt", "bst":
-		return 1
-	case "est":
-		return -5
-	default:
-		return UTC
-	}
-}
-
 // Parse parses a string containing dates, times and lengths of time (5m/5minutes) to a time object.
 func Parse(timeString string, opts ...ParseOption) time.Time {
 	options := parseOptions{
-		UTCOffset: SYSTEM_TIMEZONE, DateFormat: DEFAULT_DATE_FORMAT,
+		UTCOffset: timezone.SystemTimezone, DateFormat: dateformat.DefaultDateFormat,
 	}
 
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	var extraMs int64
-	l := newLexer(timeString)
-	dateD := dateData{0, 0, 0}
-	timeD := timeData{0, 0, 0}
-	for !l.atEnd(0) {
-		num := l.nextNumber(true)
-		if num == "" {
-			l.c++
-			continue
-		}
-		nc := l.nextChars()
+	timeCalc := time_calculator.NewTimeCalculator(options.UTCOffset)
 
-		if isDateSeparator(nc[0]) { // Parse date
-			if strings.HasPrefix(num, "-") {
-				num = num[1:]
-			}
-
-			n1, _ := strconv.Atoi(num)
-			n2, _ := strconv.Atoi(l.nextNumber(false))
-			var n3 int
-			if !l.atEnd(0) && isDateSeparator(l.s[l.c]) {
-				l.c++
-				n3, _ = strconv.Atoi(l.nextNumber(false))
-			}
-
-			dateD.year, dateD.month, dateD.day = reorderFormat(n1, n2, n3, options.DateFormat)
-		} else if nc == ":" { // Parse time
-			if strings.HasPrefix(num, "-") {
-				num = num[1:]
-			}
-
-			// Set hours
-			timeD.hour, _ = strconv.Atoi(num)
-			timeD.hour %= 24
-			// Set minutes
-			num = l.nextNumber(false)
-			timeD.minute, _ = strconv.Atoi(num)
-			timeD.minute %= 60
-
-			if !l.atEnd(0) && l.s[l.c] == ':' {
-				// Set seconds
-				l.c++
-				num = l.nextNumber(false)
-				timeD.second, _ = strconv.Atoi(num)
-				timeD.second %= 60
-			}
-		} else if nc != "" { // Parse time length
-			p := periodToMS(nc)
-			if p != 0 {
-				n, _ := strconv.Atoi(num)
-				extraMs += int64(n * p)
-			}
+	l := lexer.NewLexer(timeString, options.DateFormat, options.AllowNegatives)
+	for {
+		statement := l.NextStatement()
+		if statement == nil {
+			break
 		}
 
-	}
-
-	var t time.Time
-	if dateD.day != 0 { // Time from date
-		t = time.Date(dateD.year, time.Month(dateD.month), dateD.day, timeD.hour, timeD.minute, timeD.second, 0, time.FixedZone("", int(options.UTCOffset*60*60)))
-	} else { // Time from now
-		t = time.Now()
-		if timeD.hour != 0 {
-			now := time.Now()
-			t = t.Add(time.Duration(timeD.hour-now.Hour()) * time.Hour).
-				Add(time.Duration(timeD.minute-now.Minute()) * time.Minute).
-				Add(time.Duration(timeD.second-now.Second()) * time.Second)
+		switch statement.Type() {
+		case lexer.TimelengthStatementType:
+			timelength := statement.(lexer.TimelengthStatement)
+			timeCalc.AddPeriod(timelength.Value, timelength.Period)
+		case lexer.DateStatementType:
+			date := statement.(lexer.DateStatement)
+			timeCalc.SetDate(date.Year, date.Month, date.Day)
+		case lexer.DaytimeStatementType:
+			daytime := statement.(lexer.DaytimeStatement)
+			timeCalc.SetDayTime(daytime.Hour, daytime.Minute, daytime.Second)
 		}
 	}
-	t = t.Add(time.Duration(extraMs) * time.Millisecond).
-		Add(time.Duration(options.UTCOffset-SYSTEM_TIMEZONE) * time.Hour)
-	return t
+
+	return timeCalc.Calc()
 }
 
-// ParseTimeLength parses a string with time lengths to number of milliseconds.
+// ParseRelativeTimeLength parses a string with time lengths relative to time.now().
+func ParseRelativeTimeLength(timeLength string, opts ...ParseOption) time.Time {
+	options := parseOptions{}
+
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	// as dates and daytimes aren't parsed: timezone doesn't matter
+	timeCalc := time_calculator.NewTimeCalculator(0)
+
+	l := lexer.NewLexer(timeLength, 0, options.AllowNegatives)
+	for {
+		statement := l.NextStatement()
+		if statement == nil {
+			break
+		}
+
+		switch statement.Type() {
+		case lexer.TimelengthStatementType:
+			timelength := statement.(lexer.TimelengthStatement)
+			timeCalc.AddPeriod(timelength.Value, timelength.Period)
+		}
+	}
+
+	return timeCalc.Calc()
+}
+
+func ParseDate(dateString string, opts ...ParseOption) time.Time {
+	options := parseOptions{
+		UTCOffset: timezone.SystemTimezone, DateFormat: dateformat.DefaultDateFormat,
+	}
+
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	timeCalc := time_calculator.NewTimeCalculator(options.UTCOffset)
+
+	l := lexer.NewLexer(dateString, options.DateFormat, options.AllowNegatives)
+	for {
+		statement := l.NextStatement()
+		if statement == nil {
+			break
+		}
+
+		switch statement.Type() {
+		case lexer.DateStatementType:
+			date := statement.(lexer.DateStatement)
+			timeCalc.SetDate(date.Year, date.Month, date.Day)
+		case lexer.DaytimeStatementType:
+			daytime := statement.(lexer.DaytimeStatement)
+			timeCalc.SetDayTime(daytime.Hour, daytime.Minute, daytime.Second)
+		}
+	}
+
+	return timeCalc.Calc()
+}
+
+// ParseTimeLength parses a string of time lengths to a time.Duration approximation. Unlike the other functions this won't be accurate.
 func ParseTimeLength(timeLength string, opts ...ParseOption) (duration time.Duration) {
 	options := parseOptions{
 		AllowNegatives: true,
@@ -118,58 +113,40 @@ func ParseTimeLength(timeLength string, opts ...ParseOption) (duration time.Dura
 		opt(&options)
 	}
 
-	l := newLexer(timeLength)
+	l := lexer.NewLexer(timeLength, 0, options.AllowNegatives)
+	for {
+		statement := l.NextStatement()
+		if statement == nil {
+			break
+		}
 
-	for !l.atEnd(0) {
-		num := l.nextNumber(options.AllowNegatives)
-		if num == "" {
-			l.c++
-			continue
-		}
-		nc := l.nextChars()
-		if nc == "" {
-			l.c++
-			continue
-		}
-		p := periodToMS(nc)
-		if p != 0 {
-			n, _ := strconv.Atoi(num)
-			duration += time.Duration(n*p) * time.Millisecond
+		switch statement.Type() {
+		case lexer.TimelengthStatementType:
+			timelength := statement.(lexer.TimelengthStatement)
+			duration += time.Duration(timelength.Value*periodToSecs(timelength.Period)) * time.Second
 		}
 	}
 
 	return
 }
 
-// ParseRelativeTimeLength parses a string with time lengths to a time object based on now.
-func ParseRelativeTimeLength(timeLength string, opts ...ParseOption) time.Time {
-	options := parseOptions{
-		UTCOffset: SYSTEM_TIMEZONE,
-	}
-
-	for _, opt := range opts {
-		opt(&options)
-	}
-
-	return time.Now().
-		Add(ParseTimeLength(timeLength)).
-		Add(time.Hour * time.Duration(options.UTCOffset-SYSTEM_TIMEZONE))
-}
-
-func WithTimezone(offset UTCOffset) ParseOption {
-	return func(options *parseOptions) {
-		options.UTCOffset = offset
-	}
-}
-
-func WithDateFormat(dateFormat DateFormat) ParseOption {
-	return func(options *parseOptions) {
-		options.DateFormat = dateFormat
-	}
-}
-
-func WithoutNegatives() ParseOption {
-	return func(options *parseOptions) {
-		options.AllowNegatives = false
+func periodToSecs(period string) int {
+	switch strings.ToLower(period) {
+	case "s", "second", "seconds":
+		return 1
+	case "m", "minute", "minutes":
+		return 60
+	case "h", "hour", "hours":
+		return 60 * 60
+	case "d", "day", "days":
+		return 24 * 60 * 60
+	case "w", "week", "weeks":
+		return 7 * 24 * 60 * 60
+	case "mo", "month", "months":
+		return 30 * 24 * 60 * 60
+	case "y", "year", "years":
+		return 365 * 24 * 60 * 60
+	default:
+		return 0
 	}
 }

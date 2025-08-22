@@ -1,3 +1,3 @@
 module github.com/golittie/timeless
 
-go 1.23.7
+go 1.24.5
